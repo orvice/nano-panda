@@ -22,13 +22,6 @@ struct ToolMatrixView: View {
         filter == .pending ? state.servers.filter(state.hasPendingChanges) : state.servers
     }
 
-    private var pendingTools: [ToolID] {
-        let pending = Set(state.plan.tools.filter { $0.hasChanges || $0.status == .drift }.map(\.tool))
-        return ToolID.workspaceOrder.filter { tool in
-            pending.contains(tool) || state.matrixEdits.keys.contains { $0.tool == tool }
-        }
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 16) {
@@ -41,21 +34,37 @@ struct ToolMatrixView: View {
                 WorkspaceSegments(options: Filter.allCases, selection: $filter) { $0.rawValue }
             }
             .padding(24)
-            if tools.isEmpty {
-                ContentUnavailableView("没有检测到已安装工具", systemImage: "cable.connector")
-                    .frame(maxHeight: .infinity)
-            } else if servers.isEmpty {
-                ContentUnavailableView(
-                    state.servers.isEmpty ? "暂无 MCP" : "没有待同步的 MCP",
-                    systemImage: "square.grid.2x2"
-                )
+            if state.servers.isEmpty {
+                ContentUnavailableView {
+                    Label("暂无 MCP", systemImage: "square.grid.2x2")
+                } description: {
+                    Text("添加 MCP 后，就可以在这里为各个 Agent 工具分配配置。")
+                } actions: {
+                    Button("扫描导入", action: state.scan).buttonStyle(WorkspaceButton(kind: .primary))
+                    Button("新建 MCP", action: state.newServer).buttonStyle(WorkspaceButton())
+                }
                 .frame(maxHeight: .infinity)
             } else {
-                matrix
+                if tools.isEmpty {
+                    emptyFilter("未检测到已安装工具", icon: "cable.connector")
+                } else if servers.isEmpty {
+                    emptyFilter("没有待同步的 MCP", icon: "square.grid.2x2")
+                } else {
+                    matrix
+                }
+                footer
             }
-            footer
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func emptyFilter(_ title: String, icon: String) -> some View {
+        ContentUnavailableView {
+            Label(title, systemImage: icon)
+        } actions: {
+            Button("显示全部工具") { filter = .all }.buttonStyle(WorkspaceButton())
+        }
+        .frame(maxHeight: .infinity)
     }
 
     private var matrix: some View {
@@ -129,25 +138,27 @@ struct ToolMatrixView: View {
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 18) {
-                Label { Text("待同步变更或外部修改") } icon: {
-                    Circle().fill(WorkspaceStyle.amber).frame(width: 7, height: 7)
+            if !servers.isEmpty && !tools.isEmpty {
+                HStack(spacing: 18) {
+                    Label { Text("待同步变更或外部修改") } icon: {
+                        Circle().fill(WorkspaceStyle.amber).frame(width: 7, height: 7)
+                    }
+                    Label("Claude Desktop 的远程传输可能不受支持", systemImage: "exclamationmark.triangle")
                 }
-                Label("Claude Desktop 的远程传输可能不受支持", systemImage: "exclamationmark.triangle")
+                .font(WorkspaceStyle.small).foregroundStyle(WorkspaceStyle.muted)
+                .padding(.horizontal, 24).padding(.bottom, 12)
             }
-            .font(WorkspaceStyle.small).foregroundStyle(WorkspaceStyle.muted)
-            .padding(.horizontal, 24).padding(.bottom, 12)
             Divider().overlay(WorkspaceStyle.border)
             HStack(spacing: 8) {
-                Text(pendingTools.isEmpty ? "没有待同步变更" : pendingTools.map(\.title).joined(separator: "、") + " 有待处理变更")
+                Text(state.pendingTools.isEmpty ? "没有待同步变更" : state.pendingTools.map(\.title).joined(separator: "、") + " 有待处理变更")
                     .lineLimit(1)
                     .foregroundStyle(WorkspaceStyle.secondary)
                 Spacer()
                 Button("丢弃") { state.matrixEdits.removeAll() }
                     .buttonStyle(WorkspaceButton()).disabled(state.matrixEdits.isEmpty)
-                Button("查看差异并同步", systemImage: "doc.text.magnifyingglass", action: state.reviewMatrix)
+                Button("查看差异并同步", systemImage: "doc.text.magnifyingglass", action: state.preview)
                     .buttonStyle(WorkspaceButton(kind: .primary))
-                    .disabled(!state.canEdit)
+                    .disabled(!state.canEdit || state.pendingTools.isEmpty)
             }
             .padding(.horizontal, 24).padding(.vertical, 12)
             .background(WorkspaceStyle.sidebar)

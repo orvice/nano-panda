@@ -201,6 +201,7 @@ struct ToolPathSheet: View {
     let state: AppState
     let tool: ToolID
     @State private var path: String
+    @State private var error: String?
 
     init(state: AppState, tool: ToolID) {
         self.state = state
@@ -210,8 +211,14 @@ struct ToolPathSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 13) {
-            Text("\(tool.title) 配置路径").font(.title2.bold())
+            Text("\(tool.title) 配置路径").font(WorkspaceStyle.headline)
             TextField("自定义路径", text: $path, prompt: Text("留空使用默认路径"))
+                .textFieldStyle(.plain).workspaceField()
+                .onChange(of: path) { _, _ in error = nil }
+            if let error {
+                Label(error, systemImage: "exclamationmark.circle")
+                    .font(WorkspaceStyle.small).foregroundStyle(WorkspaceStyle.red)
+            }
             HStack {
                 Button("选择文件…") {
                     let panel = NSOpenPanel()
@@ -219,10 +226,15 @@ struct ToolPathSheet: View {
                     panel.allowsMultipleSelection = false
                     if panel.runModal() == .OK, let url = panel.url { path = url.path }
                 }
+                .buttonStyle(WorkspaceButton())
                 Spacer()
-                Button("取消") { state.sheet = nil }.keyboardShortcut(.cancelAction)
-                Button("保存") { state.savePath(path, for: tool) }
-                    .buttonStyle(WorkspaceButton(kind: .primary)).keyboardShortcut(.defaultAction)
+                Button("取消") { state.sheet = nil }
+                    .buttonStyle(WorkspaceButton()).keyboardShortcut(.cancelAction)
+                Button("保存") {
+                    do { try state.savePath(path, for: tool) }
+                    catch { self.error = error.localizedDescription }
+                }
+                .buttonStyle(WorkspaceButton(kind: .primary)).keyboardShortcut(.defaultAction)
             }
         }.padding(20).frame(width: 510)
     }

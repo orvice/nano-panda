@@ -11,6 +11,7 @@ public enum SyncStatus: String {
     case synced = "已同步"
     case pending = "待同步"
     case drift = "外部有修改"
+    case unmanaged = "未托管"
     case missing = "未创建"
     case unavailable = "无法读取"
 }
@@ -151,7 +152,8 @@ public struct SyncEngine {
                 let status: SyncStatus
                 if let receipt, receipt.digest != Self.digest(before) { status = .drift }
                 else if before == nil { status = .missing }
-                else if before != after { status = .pending }
+                else if before != after || (receipt == nil && !ids.isEmpty) { status = .pending }
+                else if receipt == nil { status = .unmanaged }
                 else { status = .synced }
                 let diff = try UnifiedDiff.make(
                     before: ConfigEncoding.text(before), after: ConfigEncoding.text(after),

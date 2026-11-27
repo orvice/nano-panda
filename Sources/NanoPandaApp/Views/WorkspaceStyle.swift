@@ -37,7 +37,7 @@ enum WorkspaceStyle {
         case .synced: return green
         case .pending, .drift: return amber
         case .unavailable: return red
-        case .missing: return strongBorder
+        case .missing, .unmanaged: return strongBorder
         }
     }
 
@@ -46,7 +46,7 @@ enum WorkspaceStyle {
         case .synced: return (greenTint, greenInk)
         case .pending, .drift: return (amberTint, amberInk)
         case .unavailable: return (redTint, red)
-        case .missing: return (neutral, secondary)
+        case .missing, .unmanaged: return (neutral, secondary)
         }
     }
 }

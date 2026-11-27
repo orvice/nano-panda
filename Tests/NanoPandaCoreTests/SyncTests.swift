@@ -128,6 +128,20 @@ final class SyncTests: XCTestCase {
         XCTAssertThrowsError(try discovery.importing(["collision": .skip], into: empty))
     }
 
+    func testExistingConfigWithoutAssignmentsIsUnmanaged() throws {
+        _ = try write(#"{"mcpServers":{"external":{"command":"node"}}}"#, to: .cursor)
+        let registry = Registry()
+
+        let managed = engine.preview(registry)
+        XCTAssertEqual(try change(.cursor, in: managed).status.rawValue, "未托管")
+        XCTAssertEqual(managed.changeCount, 0)
+        XCTAssertFalse(managed.canApply)
+
+        let full = try change(.cursor, in: engine.preview(registry, mode: .full))
+        XCTAssertEqual(full.status, .pending)
+        XCTAssertEqual(full.removedIDs, ["external"])
+    }
+
     func testMatchingExistingConfigurationCanBeAdoptedWithoutFileChanges() throws {
         _ = try write(#"{"mcpServers":{"managed":{"command":"node"}}}"#, to: .cursor)
         var registry = Registry()

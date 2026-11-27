@@ -22,6 +22,7 @@ struct MainSplitView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .ignoresSafeArea(.container, edges: .top)
         .background(Color.white)
         .foregroundStyle(WorkspaceStyle.ink)
         .font(WorkspaceStyle.body)
@@ -85,14 +86,11 @@ struct MainSplitView: View {
                 .buttonStyle(WorkspaceButton())
             Button("新建 MCP", systemImage: "plus", action: state.newServer)
                 .buttonStyle(WorkspaceButton())
-            Button {
-                if state.destination == .matrix && !state.matrixEdits.isEmpty { state.reviewMatrix() }
-                else { state.preview() }
-            } label: {
+            Button(action: state.preview) {
                 HStack(spacing: 7) {
                     Label("同步变更", systemImage: "arrow.triangle.2.circlepath")
-                    if state.plan.changeCount > 0 {
-                        Text(state.plan.changeCount, format: .number)
+                    if !state.pendingTools.isEmpty {
+                        Text(state.pendingTools.count, format: .number)
                             .font(.system(size: 11, weight: .semibold).monospacedDigit())
                             .foregroundStyle(WorkspaceStyle.blue)
                             .frame(minWidth: 19, minHeight: 19)

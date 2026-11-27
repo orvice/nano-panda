@@ -18,13 +18,23 @@ struct SyncPreviewSheet: View {
         VStack(spacing: 0) {
             heading
             Divider().overlay(WorkspaceStyle.border)
-            HStack(spacing: 0) {
-                changes.frame(width: 248)
-                Divider().overlay(WorkspaceStyle.border)
-                if let change = preview.tools.first(where: { $0.tool == selected }) {
-                    changeDetail(change)
+            Group {
+                if Self.reviewItems(preview).isEmpty {
+                    ContentUnavailableView(
+                        "没有待审查的文件差异", systemImage: "doc.text.magnifyingglass",
+                        description: Text(preview.canApply ? "可以确认保存当前工具分配。" : "保存 MCP 或调整工具分配后，可在这里查看差异。")
+                    )
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    DiffView(diff: "")
+                    HStack(spacing: 0) {
+                        changes.frame(width: 248)
+                        Divider().overlay(WorkspaceStyle.border)
+                        if let change = preview.tools.first(where: { $0.tool == selected }) {
+                            changeDetail(change)
+                        } else {
+                            DiffView(diff: "")
+                        }
+                    }
                 }
             }
             .frame(maxHeight: .infinity)
@@ -127,6 +137,10 @@ struct SyncPreviewSheet: View {
             VStack(alignment: .leading, spacing: 7) {
                 Label(change.path.path, systemImage: "doc.text")
                     .font(WorkspaceStyle.mono).textSelection(.enabled)
+                if change.status == .pending && !change.hasChanges {
+                    Text("文件已符合工具分配，确认后会记录托管状态。")
+                        .foregroundStyle(WorkspaceStyle.muted)
+                }
                 if let error = change.error {
                     Label(error, systemImage: "exclamationmark.circle").foregroundStyle(WorkspaceStyle.red)
                 }
@@ -179,7 +193,9 @@ struct SyncPreviewSheet: View {
     }
 
     private static func reviewItems(_ preview: SyncPlan) -> [ToolChange] {
-        let choices = preview.tools.filter { $0.hasChanges || $0.status == .drift || $0.error != nil }
+        let choices = preview.tools.filter {
+            $0.hasChanges || $0.status == .pending || $0.status == .drift || $0.error != nil
+        }
         return choices.sorted { left, right in
             if left.hasChanges != right.hasChanges { return left.hasChanges }
             return left.tool.title < right.tool.title

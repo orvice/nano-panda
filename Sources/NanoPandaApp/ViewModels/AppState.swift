@@ -76,18 +76,22 @@ final class AppState {
         sheet = .inspect
     }
 
+    var pendingTools: [ToolID] {
+        let planned = Set(plan.tools.filter { $0.hasChanges || $0.status == .drift || $0.status == .pending }.map(\.tool))
+        let affected = planned.union(matrixEdits.keys.map(\.tool))
+        return ToolID.workspaceOrder.filter(affected.contains)
+    }
+
     func preview() {
         guard canEdit else { return }
         refresh()
-        previewRegistry = nil
-        sheet = .sync
-    }
-
-    func reviewMatrix() {
-        guard canEdit else { return }
-        var draft = registry
-        for (assignment, enabled) in matrixEdits { draft.set(assignment, enabled: enabled) }
-        previewRegistry = draft
+        if matrixEdits.isEmpty {
+            previewRegistry = nil
+        } else {
+            var draft = registry
+            for (assignment, enabled) in matrixEdits { draft.set(assignment, enabled: enabled) }
+            previewRegistry = draft
+        }
         sheet = .sync
     }
 
@@ -138,21 +142,19 @@ final class AppState {
         sheet = .path
     }
 
-    func savePath(_ path: String, for tool: ToolID) {
-        perform {
-            var updated = registry
-            let path = path.trimmingCharacters(in: .whitespacesAndNewlines)
-            if path.isEmpty {
-                updated.customPaths.removeValue(forKey: tool)
-            } else {
-                guard path.hasPrefix("/") || path.hasPrefix("~/") else {
-                    throw PandaError.invalid("请输入绝对路径或以 ~/ 开头的路径。")
-                }
-                updated.customPaths[tool] = path
+    func savePath(_ input: String, for tool: ToolID) throws {
+        var updated = registry
+        let path = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if path.isEmpty {
+            updated.customPaths.removeValue(forKey: tool)
+        } else {
+            guard path.hasPrefix("/") || path.hasPrefix("~/") else {
+                throw PandaError.invalid("请输入绝对路径或以 ~/ 开头的路径。")
             }
-            try save(updated)
-            sheet = nil
+            updated.customPaths[tool] = path
         }
+        try save(updated)
+        sheet = nil
     }
 
     func saveServer(_ server: MCPServer, replacing original: String?) throws {
