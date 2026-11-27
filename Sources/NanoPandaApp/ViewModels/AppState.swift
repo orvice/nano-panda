@@ -26,7 +26,6 @@ final class AppState {
     var failure: String?
     var backupIssue: String?
     var matrixEdits: [ToolAssignment: Bool] = [:]
-    var showSidebar = true
     var search = ""
     var searchRequest = 0
     var previewRegistry: Registry?

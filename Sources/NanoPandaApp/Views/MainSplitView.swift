@@ -3,17 +3,20 @@ import SwiftUI
 
 struct MainSplitView: View {
     @Bindable var state: AppState
+    @AppStorage("sidebarExpanded") private var sidebarExpanded = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var searching: Bool
+    @State private var sidebarButtonHovered = false
+    @State private var lastServerWorkspace = Destination.overview
 
     var body: some View {
         VStack(spacing: 0) {
             toolbar
             Divider().overlay(WorkspaceStyle.border)
             HStack(spacing: 0) {
-                if state.showSidebar {
-                    sidebar.frame(width: 200)
-                    Divider().overlay(WorkspaceStyle.border)
-                }
+                sidebar.frame(width: sidebarExpanded ? 200 : 52)
+                    .clipped()
+                Divider().overlay(WorkspaceStyle.border)
                 switch state.destination {
                 case .matrix: ToolMatrixView(state: state)
                 case .tools: ToolSettingsView(state: state)
@@ -29,6 +32,12 @@ struct MainSplitView: View {
         .tint(WorkspaceStyle.blue)
         .preferredColorScheme(.light)
         .onChange(of: state.searchRequest) { _, _ in searching = true }
+        .onChange(of: state.destination, initial: true) { _, destination in
+            switch destination {
+            case .server, .overview: lastServerWorkspace = destination ?? .overview
+            default: break
+            }
+        }
         .sheet(item: $state.sheet) { sheet in
             switch sheet {
             case .new: ServerEditorView(state: state, server: nil).frame(width: 720, height: 680)
@@ -54,14 +63,24 @@ struct MainSplitView: View {
     private var toolbar: some View {
         HStack(spacing: 8) {
             Button {
-                state.showSidebar.toggle()
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                    sidebarExpanded.toggle()
+                }
             } label: {
                 Image(systemName: "sidebar.left")
-                    .font(.system(size: 15)).frame(width: 30, height: 32)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(sidebarExpanded ? WorkspaceStyle.secondary : WorkspaceStyle.blue)
+                    .frame(width: 32, height: 32)
+                    .background(
+                        sidebarExpanded ? (sidebarButtonHovered ? WorkspaceStyle.neutral : .clear) : WorkspaceStyle.blueTint,
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(state.showSidebar ? "隐藏侧栏" : "显示侧栏")
-            .accessibilityLabel(state.showSidebar ? "隐藏侧栏" : "显示侧栏")
+            .onHover { sidebarButtonHovered = $0 }
+            .help(sidebarExpanded ? "折叠侧栏" : "展开侧栏")
+            .accessibilityLabel(sidebarExpanded ? "折叠侧栏" : "展开侧栏")
 
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(WorkspaceStyle.muted)
@@ -107,30 +126,46 @@ struct MainSplitView: View {
     }
 
     private var sidebar: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: sidebarExpanded ? .leading : .center, spacing: 16) {
             HStack(spacing: 9) {
                 PandaMark()
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Nano Panda").font(WorkspaceStyle.title)
-                    if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
-                        Text("v" + version).font(WorkspaceStyle.mono).foregroundStyle(WorkspaceStyle.muted)
+                if sidebarExpanded {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Nano Panda").font(WorkspaceStyle.title)
+                        if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+                            Text("v" + version).font(WorkspaceStyle.mono).foregroundStyle(WorkspaceStyle.muted)
+                        }
                     }
+                    .fixedSize()
+                    .transition(.opacity)
                 }
             }
-            .padding(.horizontal, 6).padding(.vertical, 4)
+            .padding(.horizontal, sidebarExpanded ? 6 : 0)
+            .frame(height: 36)
             VStack(alignment: .leading, spacing: 4) {
-                sidebarHeading("工作区")
+                if sidebarExpanded { sidebarHeading("工作区").transition(.opacity) }
                 navigation("MCP 服务", icon: "server.rack", active: state.destination != .matrix && state.destination != .tools,
-                           count: state.servers.count) {
-                    state.search = ""
-                    state.destination = state.servers.first.map { .server($0.id) } ?? .overview
-                }
+                           count: state.servers.count, action: showServerWorkspace)
                 navigation("工具矩阵", icon: "square.grid.2x2", active: state.destination == .matrix) {
                     state.destination = .matrix
                 }
                 navigation("Agent 工具", icon: "cable.connector", active: state.destination == .tools,
                            count: ToolID.allCases.count) { state.destination = .tools }
             }
+            if sidebarExpanded {
+                sidebarStatus.transition(.opacity)
+            } else {
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.horizontal, sidebarExpanded ? 12 : 8)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: sidebarExpanded ? .topLeading : .top)
+        .background(WorkspaceStyle.sidebar)
+    }
+
+    private var sidebarStatus: some View {
+        Group {
             Divider().overlay(WorkspaceStyle.border)
             VStack(alignment: .leading, spacing: 9) {
                 sidebarHeading("同步状态")
@@ -162,9 +197,15 @@ struct MainSplitView: View {
                 .foregroundStyle(WorkspaceStyle.greenInk)
                 .padding(.horizontal, 8)
         }
-        .padding(12)
-        .frame(maxHeight: .infinity, alignment: .top)
-        .background(WorkspaceStyle.sidebar)
+    }
+
+    private func showServerWorkspace() {
+        guard state.destination == .matrix || state.destination == .tools else { return }
+        if case let .server(id) = lastServerWorkspace, state.servers.contains(where: { $0.id == id }) {
+            state.destination = lastServerWorkspace
+        } else {
+            state.destination = state.servers.first.map { .server($0.id) } ?? .overview
+        }
     }
 
     private func sidebarHeading(_ label: String) -> some View {
@@ -178,23 +219,32 @@ struct MainSplitView: View {
     ) -> some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Image(systemName: icon).frame(width: 16)
-                Text(label)
-                Spacer(minLength: 0)
-                if let count {
-                    Text(count, format: .number).font(.system(size: 11, weight: .medium).monospacedDigit())
-                        .padding(.horizontal, 6).padding(.vertical, 2)
-                        .background(active ? .white : WorkspaceStyle.neutral, in: Capsule())
+                Image(systemName: icon)
+                    .font(.system(size: sidebarExpanded ? 13 : 15, weight: active ? .semibold : .medium))
+                    .frame(width: 16)
+                if sidebarExpanded {
+                    Text(label).lineLimit(1)
+                    Spacer(minLength: 0)
+                    if let count {
+                        Text(count, format: .number)
+                            .font(.system(size: 11, weight: .medium).monospacedDigit())
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(active ? .white : WorkspaceStyle.neutral, in: Capsule())
+                    }
                 }
             }
             .font(.system(size: 13, weight: active ? .semibold : .medium))
             .foregroundStyle(active ? WorkspaceStyle.blue : WorkspaceStyle.secondary)
-            .padding(.horizontal, 8).frame(height: 34)
+            .padding(.horizontal, sidebarExpanded ? 8 : 0)
+            .frame(width: sidebarExpanded ? nil : 36, height: 36)
             .background(active ? WorkspaceStyle.blueTint : .clear, in: RoundedRectangle(cornerRadius: 8))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .accessibilityValue(count.map { String($0) } ?? "")
         .accessibilityAddTraits(active ? .isSelected : [])
+        .help(label)
     }
 
     private var serverWorkspace: some View {
