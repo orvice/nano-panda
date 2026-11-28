@@ -15,6 +15,17 @@ open dist/NanoPanda.app
 
 也可以在 Xcode 中打开 `Package.swift`。打包脚本生成供本机使用的临时签名应用，无需 Mac App Store 沙盒权限。
 
+## 发布
+
+推送 `vX.Y.Z` 标签后，`Release` 工作流会运行测试，构建通用（arm64 与 x86_64）应用，打包成 `NanoPanda-X.Y.Z.dmg`，并连同 SHA-256 校验文件发布到对应的 GitHub Release。
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+本地可用 `NANOPANDA_VERSION=0.1.0 ./scripts/bundle-app.sh && NANOPANDA_VERSION=0.1.0 ./scripts/make-dmg.sh` 生成 DMG。应用为临时签名，未经公证。首次打开需在访达中右键选择「打开」，或在「系统设置 → 隐私与安全性」中允许。
+
 ## 使用
 
 1. 从工具栏扫描并导入现有 MCP，或新建条目、粘贴 JSON。

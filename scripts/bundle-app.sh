@@ -4,6 +4,9 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
+version="${NANOPANDA_VERSION:-0.1.0}"
+build_number="${NANOPANDA_BUILD:-1}"
+
 swift build -c release "$@"
 binary_directory="$(swift build -c release --show-bin-path "$@")"
 destination="$root/dist/NanoPanda.app"
@@ -21,7 +24,7 @@ bundle="$staging/NanoPanda.app"
 mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
 install -m 0755 "$binary_directory/NanoPanda" "$bundle/Contents/MacOS/NanoPanda"
 install -m 0644 Assets/NanoPanda.icns "$bundle/Contents/Resources/NanoPanda.icns"
-cat > "$bundle/Contents/Info.plist" <<'PLIST'
+cat > "$bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -32,8 +35,8 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
     <key>CFBundleIconFile</key><string>NanoPanda.icns</string>
     <key>CFBundleIdentifier</key><string>dev.orvice.nanopanda</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.0</string>
-    <key>CFBundleVersion</key><string>1</string>
+    <key>CFBundleShortVersionString</key><string>${version}</string>
+    <key>CFBundleVersion</key><string>${build_number}</string>
     <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
