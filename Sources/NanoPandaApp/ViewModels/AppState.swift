@@ -3,7 +3,14 @@ import NanoPandaCore
 import Observation
 
 enum Destination: Hashable {
-    case overview, server(String), matrix, tools
+    case overview, server(String), matrix, tools, cli
+
+    var isServerWorkspace: Bool {
+        switch self {
+        case .overview, .server: return true
+        case .matrix, .tools, .cli: return false
+        }
+    }
 }
 
 enum ActiveSheet: String, Identifiable {
@@ -27,6 +34,7 @@ final class AppState {
     var backupIssue: String?
     var matrixEdits: [ToolAssignment: Bool] = [:]
     var search = ""
+    var cliSearch = ""
     var searchRequest = 0
     var previewRegistry: Registry?
 
