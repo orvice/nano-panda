@@ -9,8 +9,15 @@ struct NanoPandaApp: App {
         Window("Nano Panda", id: "main") {
             MainSplitView(state: state)
                 .frame(minWidth: 980, minHeight: 620)
+                .task { await state.cloud.start() }
                 .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
                     state.refresh()
+                    state.cloud.scheduleAutomaticSync()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+                    if let window = notification.object as? NSWindow, window.canBecomeMain, window.sheetParent == nil {
+                        state.cloud.scheduleAutomaticSync()
+                    }
                 }
         }
         .windowStyle(.hiddenTitleBar)
@@ -19,6 +26,11 @@ struct NanoPandaApp: App {
             CommandGroup(replacing: .newItem) {
                 Button("新建 MCP", systemImage: "plus", action: state.newServer)
                     .keyboardShortcut("n")
+            }
+            CommandMenu("云端同步") {
+                Button("打开云端同步", action: state.openCloud)
+                Button("立即同步", action: state.syncCloudNow)
+                    .disabled(!state.cloud.canSync || !state.canEdit)
             }
             CommandMenu("MCP") {
                 Button("搜索工作区", action: state.focusSearch).keyboardShortcut("k")
