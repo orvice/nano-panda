@@ -1,8 +1,6 @@
-import CommonCrypto
 import CryptoKit
 import Darwin
 import Foundation
-import Security
 
 public struct MCPArchive: Sendable {
     public enum Protection: String, Codable, CaseIterable, Sendable {
@@ -39,9 +37,6 @@ public struct MCPArchive: Sendable {
     private static let formatID = "nano-panda.mcp"
     private static let formatVersion = 1
     private static let fileLimit = 32 * 1024 * 1024
-    private static let saltSize = 16
-    private static let keySize = 32
-    private static let rounds: UInt32 = 600_000
     private let envelope: Envelope
 
     public var protection: Protection { envelope.header.protection }
@@ -67,7 +62,7 @@ public struct MCPArchive: Sendable {
             }
             try Self.validate(servers)
         case .password:
-            guard decoded.servers == nil, decoded.salt?.count == Self.saltSize,
+            guard decoded.servers == nil, decoded.salt?.count == ConfigurationCipher.saltSize,
                   let sealed = decoded.sealed, sealed.count >= 28 else { throw Self.invalidArchive }
         case .key:
             guard decoded.servers == nil, decoded.salt == nil,
@@ -106,7 +101,7 @@ public struct MCPArchive: Sendable {
     }
 
     public static func generateKey() throws -> String {
-        try randomBytes(count: keySize).base64EncodedString()
+        try ConfigurationCipher.generateKey()
     }
 
     public static func export(
@@ -132,12 +127,11 @@ public struct MCPArchive: Sendable {
             if protection == .password && credential.precomposedStringWithCanonicalMapping.count < 12 {
                 throw PandaError.invalid("导出密码至少需要 12 个字符。")
             }
-            let salt = protection == .password ? try randomBytes(count: saltSize) : nil
+            let salt = protection == .password ? try ConfigurationCipher.randomBytes(count: ConfigurationCipher.saltSize) : nil
             let key = try encryptionKey(protection: protection, credential: credential, salt: salt)
             let payload = try encoder.encode(servers)
             guard payload.count <= fileLimit else { throw fileTooLarge }
-            let box = try AES.GCM.seal(payload, using: key, authenticating: header.authenticatedData(salt: salt))
-            guard let sealed = box.combined else { throw PandaError.invalid("无法生成加密归档。") }
+            let sealed = try ConfigurationCipher.seal(payload, with: key, authenticating: header.authenticatedData(salt: salt))
             envelope = Envelope(header: header, salt: salt, sealed: sealed, servers: nil)
         }
         let data = try encoder.encode(envelope)
@@ -151,10 +145,8 @@ public struct MCPArchive: Sendable {
         let key = try Self.encryptionKey(protection: protection, credential: credential, salt: envelope.salt)
         let payload: Data
         do {
-            payload = try AES.GCM.open(
-                AES.GCM.SealedBox(combined: sealed),
-                using: key,
-                authenticating: envelope.header.authenticatedData(salt: envelope.salt)
+            payload = try ConfigurationCipher.open(
+                sealed, with: key, authenticating: envelope.header.authenticatedData(salt: envelope.salt)
             )
         } catch {
             throw PandaError.invalid("密码或密钥不正确，或归档内容已损坏。")
@@ -198,48 +190,13 @@ public struct MCPArchive: Sendable {
     private static func encryptionKey(protection: Protection, credential: String, salt: Data?) throws -> SymmetricKey {
         switch protection {
         case .key:
-            let input = credential.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard input.utf8.count == 44,
-                  let raw = Data(base64Encoded: input), raw.count == keySize,
-                  raw.base64EncodedString() == input else {
-                throw PandaError.invalid("请输入 32 字节的 Base64 密钥。")
-            }
-            return SymmetricKey(data: raw)
+            return try ConfigurationCipher.rawKey(credential)
         case .password:
-            guard let salt, salt.count == saltSize else { throw invalidArchive }
-            let password = Array(credential.precomposedStringWithCanonicalMapping.utf8)
-            guard (1...1024).contains(password.count) else {
-                throw PandaError.invalid("请输入密码，密码不得超过 1024 UTF-8 字节。")
-            }
-            var derived = Data(count: keySize)
-            let status = derived.withUnsafeMutableBytes { output in
-                password.withUnsafeBufferPointer { input in
-                    salt.withUnsafeBytes { saltBytes in
-                        input.baseAddress!.withMemoryRebound(to: CChar.self, capacity: input.count) { characters in
-                            CCKeyDerivationPBKDF(
-                                CCPBKDFAlgorithm(kCCPBKDF2), characters, input.count,
-                                saltBytes.bindMemory(to: UInt8.self).baseAddress!, saltBytes.count,
-                                CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256), rounds,
-                                output.bindMemory(to: UInt8.self).baseAddress!, output.count
-                            )
-                        }
-                    }
-                }
-            }
-            guard status == kCCSuccess else { throw PandaError.invalid("无法从密码派生加密密钥。") }
-            return SymmetricKey(data: derived)
+            guard let salt else { throw invalidArchive }
+            return try ConfigurationCipher.passwordKey(credential, salt: salt)
         case .plaintext:
             throw invalidArchive
         }
-    }
-
-    private static func randomBytes(count: Int) throws -> Data {
-        var bytes = Data(count: count)
-        let status = bytes.withUnsafeMutableBytes { buffer in
-            SecRandomCopyBytes(kSecRandomDefault, buffer.count, buffer.baseAddress!)
-        }
-        guard status == errSecSuccess else { throw PandaError.invalid("无法生成安全随机数据。") }
-        return bytes
     }
 
     private static var invalidArchive: PandaError { .invalid("MCP 归档无效或已损坏。") }
