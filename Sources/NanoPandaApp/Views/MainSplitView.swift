@@ -21,6 +21,7 @@ struct MainSplitView: View {
                 case .matrix: ToolMatrixView(state: state)
                 case .tools: ToolSettingsView(state: state)
                 case .cli: CLIToolsView(home: state.engine.home, query: state.cliSearch)
+                case .cloud: CloudSyncView(state: state)
                 default: serverWorkspace
                 }
             }
@@ -39,7 +40,7 @@ struct MainSplitView: View {
             default: break
             }
         }
-        .sheet(item: $state.sheet) { sheet in
+        .sheet(item: $state.sheet, onDismiss: state.presentDeferredCloudConflict) { sheet in
             switch sheet {
             case .new: ServerEditorView(state: state, server: nil).frame(width: 720, height: 680)
             case .paste: PasteSheet(state: state)
@@ -52,6 +53,15 @@ struct MainSplitView: View {
             case .inspect: ToolInspectSheet(state: state, tool: state.editingTool)
             case .importArchive: ArchiveImportSheet(state: state)
             case .exportArchive: ArchiveExportSheet(state: state)
+            case .cloudConflicts:
+                if let preview = state.cloud.conflict {
+                    CloudConflictSheet(state: state, preview: preview).id(state.cloud.conflictVersion)
+                }
+            case .cloudRestore:
+                if let preview = state.cloud.restorePreview {
+                    CloudSnapshotRestoreSheet(state: state, preview: preview)
+                }
+            case .cloudCreateSnapshot: CloudSnapshotCreateSheet(state: state)
             }
         }
         .alert("操作未完成", isPresented: Binding(
@@ -91,7 +101,9 @@ struct MainSplitView: View {
                     .textFieldStyle(.plain).focused($searching)
                     .onChange(of: state.search) { _, search in
                         guard !search.isEmpty else { return }
-                        if state.destination == .matrix || state.destination == .tools { state.destination = .overview }
+                        if state.destination == .matrix || state.destination == .tools || state.destination == .cloud {
+                            state.destination = .overview
+                        }
                     }
                 if workspaceSearch.wrappedValue.isEmpty {
                     FormatBadge(label: "⌘K").accessibilityHidden(true)
@@ -171,12 +183,14 @@ struct MainSplitView: View {
                 navigation("CLI 工具", icon: "terminal", active: state.destination == .cli) {
                     state.destination = .cli
                 }
+                navigation("云端同步", icon: "icloud", active: state.destination == .cloud, action: state.openCloud)
             }
             if sidebarExpanded {
                 sidebarStatus.transition(.opacity)
             } else {
                 Spacer(minLength: 0)
             }
+            cloudSidebarMenu
         }
         .padding(.horizontal, sidebarExpanded ? 12 : 8)
         .padding(.vertical, 12)
@@ -188,7 +202,7 @@ struct MainSplitView: View {
         Group {
             Divider().overlay(WorkspaceStyle.border)
             VStack(alignment: .leading, spacing: 9) {
-                sidebarHeading("同步状态")
+                sidebarHeading("本机同步状态")
                 ForEach(ToolID.workspaceOrder) { tool in
                     if let change = state.plan.tools.first(where: { $0.tool == tool }),
                        change.status != .missing || change.hasChanges {
@@ -211,11 +225,37 @@ struct MainSplitView: View {
                 }
             }
             Spacer(minLength: 0)
+        }
+    }
+
+    private var cloudSidebarMenu: some View {
+        VStack(alignment: .leading, spacing: 8) {
             Divider().overlay(WorkspaceStyle.border)
-            Label("自动备份已启用", systemImage: "checkmark.shield")
-                .font(WorkspaceStyle.small)
-                .foregroundStyle(WorkspaceStyle.greenInk)
-                .padding(.horizontal, 8)
+            Menu {
+                Button("打开云端同步", systemImage: "icloud", action: state.openCloud)
+                Button("立即同步", systemImage: "arrow.triangle.2.circlepath", action: state.syncCloudNow)
+                    .disabled(!state.cloud.canSync || !state.canEdit)
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "icloud")
+                    if sidebarExpanded {
+                        Text("云端")
+                        Spacer(minLength: 0)
+                        CloudStatusBadge(cloud: state.cloud, filled: false)
+                    }
+                }
+                .font(WorkspaceStyle.small).foregroundStyle(WorkspaceStyle.secondary)
+                .padding(.horizontal, sidebarExpanded ? 8 : 4).frame(minHeight: 24)
+            }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden)
+            .accessibilityLabel("云端同步快捷操作").accessibilityValue(state.cloud.status)
+            .help("云端同步 · " + state.cloud.status)
+            if sidebarExpanded {
+                Label("自动备份已启用", systemImage: "checkmark.shield")
+                    .font(WorkspaceStyle.small)
+                    .foregroundStyle(WorkspaceStyle.greenInk)
+                    .padding(.horizontal, 8)
+            }
         }
     }
 
