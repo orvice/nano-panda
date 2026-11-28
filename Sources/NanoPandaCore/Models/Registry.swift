@@ -167,6 +167,7 @@ public struct Registry: Codable, Equatable {
     public var servers: [MCPServer] = []
     public var customPaths: [ToolID: String] = [:]
     public var receipts: [ToolID: SyncReceipt] = [:]
+    var cloudRestorationID: UUID?
     public init() {}
 
     public mutating func set(_ assignment: ToolAssignment, enabled: Bool) {

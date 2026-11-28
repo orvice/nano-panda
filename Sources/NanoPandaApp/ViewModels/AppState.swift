@@ -3,24 +3,26 @@ import NanoPandaCore
 import Observation
 
 enum Destination: Hashable {
-    case overview, server(String), matrix, tools, cli
+    case overview, server(String), matrix, tools, cli, cloud
 
     var isServerWorkspace: Bool {
         switch self {
         case .overview, .server: return true
-        case .matrix, .tools, .cli: return false
+        case .matrix, .tools, .cli, .cloud: return false
         }
     }
 }
 
 enum ActiveSheet: String, Identifiable {
     case new, paste, scan, sync, path, restore, inspect, importArchive, exportArchive
+    case cloudConflicts, cloudRestore, cloudCreateSnapshot
     var id: Self { self }
 }
 
 @MainActor @Observable
 final class AppState {
-    let engine = SyncEngine()
+    let engine: SyncEngine
+    let cloud: CloudWorkspaceState
     private(set) var registry = Registry()
     private(set) var plan: SyncPlan
     private(set) var snapshots: [BackupSnapshot] = []
@@ -37,9 +39,15 @@ final class AppState {
     var cliSearch = ""
     var searchRequest = 0
     var previewRegistry: Registry?
+    @ObservationIgnored private var deferredCloudConflict = false
 
     init() {
+        let engine = SyncEngine()
+        self.engine = engine
+        cloud = CloudWorkspaceState(store: engine.store)
         plan = engine.preview(Registry())
+        cloud.reloadRegistry = { [weak self] in try self?.reloadCloudRegistry() }
+        cloud.presentConflicts = { [weak self] in self?.presentCloudConflicts() }
         do {
             registry = try engine.store.load()
             canEdit = true
@@ -61,6 +69,33 @@ final class AppState {
         } catch {
             backupIssue = error.localizedDescription
         }
+    }
+
+    func openCloud() { destination = .cloud }
+
+    func syncCloudNow() {
+        guard cloud.canSync, canEdit else { return }
+        if cloud.conflict != nil {
+            presentCloudConflicts()
+        } else {
+            Task { await cloud.synchronize() }
+        }
+    }
+
+    func presentCloudConflicts() {
+        guard cloud.conflict != nil else { return }
+        if sheet == nil {
+            deferredCloudConflict = false
+            sheet = .cloudConflicts
+        } else if sheet != .cloudConflicts {
+            deferredCloudConflict = true
+        }
+    }
+
+    func presentDeferredCloudConflict() {
+        guard deferredCloudConflict else { return }
+        deferredCloudConflict = false
+        presentCloudConflicts()
     }
 
     func newServer() { if canEdit { sheet = .new } }
@@ -96,7 +131,7 @@ final class AppState {
     }
 
     func focusSearch() {
-        if destination == .matrix || destination == .tools { destination = .overview }
+        if destination == .matrix || destination == .tools || destination == .cloud { destination = .overview }
         searchRequest += 1
     }
 
@@ -147,17 +182,21 @@ final class AppState {
     }
 
     func apply(_ preview: SyncPlan) throws {
+        let previous = registry.servers
         registry = try engine.apply(preview)
         if previewRegistry != nil { matrixEdits.removeAll() }
         previewRegistry = nil
         sheet = nil
         refresh()
+        if registry.servers != previous { cloud.registryDidChange() }
     }
 
     func restore(_ preview: RestorePlan) throws {
+        let previous = registry.servers
         registry = try engine.restore(preview)
         sheet = nil
         refresh()
+        if registry.servers != previous { cloud.registryDidChange() }
     }
 
     func startRestore(_ snapshot: BackupSnapshot) {
@@ -241,6 +280,22 @@ final class AppState {
     private func save(_ updated: Registry) throws {
         guard canEdit else { throw PandaError.invalid("中央配置库无法编辑。") }
         try engine.store.save(updated, replacing: registry)
+        let changedServers = updated.servers != registry.servers
+        updateRegistry(updated)
+        if changedServers { cloud.registryDidChange() }
+    }
+
+    private func reloadCloudRegistry() throws {
+        let updated = try engine.store.load()
+        guard updated != registry || !canEdit else { return }
+        canEdit = true
+        updateRegistry(updated)
+        if case let .server(id) = destination, !updated.servers.contains(where: { $0.id == id }) {
+            destination = .overview
+        }
+    }
+
+    private func updateRegistry(_ updated: Registry) {
         registry = updated
         matrixEdits = matrixEdits.filter { assignment, enabled in
             updated.servers.contains { $0.id == assignment.serverID && $0.enabledTools.contains(assignment.tool) != enabled }

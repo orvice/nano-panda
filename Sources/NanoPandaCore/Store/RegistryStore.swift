@@ -23,7 +23,9 @@ public struct RegistryStore {
             guard try load() == expected else {
                 throw PandaError.stale("中央配置库已被其他进程修改，请重新启动 Nano Panda 后再编辑。")
             }
-            try write(registry)
+            var updated = registry
+            updated.cloudRestorationID = expected.cloudRestorationID
+            try write(updated)
         }
     }
 
