@@ -27,29 +27,31 @@ final class CloudTransportTests: XCTestCase {
             endpoint: "https://dav.example.test/root/", objectKey: "projects/live.json",
             username: "fixture", password: "test"
         ))
+        let namespace = "ac5c61369f0a508715ba0cc2921e173e"
+        let prefix = "projects/snapshots/\(namespace)/"
         let remote = try CloudRemote(target: target, execute: { request in
             let url = try XCTUnwrap(request.url)
             XCTAssertEqual(request.httpMethod, "PROPFIND")
             XCTAssertEqual(request.value(forHTTPHeaderField: "Depth"), "1")
-            XCTAssertEqual(url.absoluteString, "https://dav.example.test/root/projects/snapshots/")
+            XCTAssertEqual(url.absoluteString, "https://dav.example.test/root/\(prefix)")
             let xml = """
                 <D:multistatus xmlns:D="DAV:">
-                  <D:response><D:href>/root/projects/snapshots/</D:href>
+                  <D:response><D:href>/root/\(prefix)</D:href>
                     <D:propstat><D:prop><D:resourcetype><D:collection/></D:resourcetype></D:prop>
                     <D:status>HTTP/1.1 200 OK</D:status></D:propstat>
                   </D:response>
-                  <D:response><D:href>/root/projects/snapshots/first%20copy.json</D:href></D:response>
+                  <D:response><D:href>/root/\(prefix)first%20copy.json</D:href></D:response>
                   <D:response><D:href>second.json</D:href></D:response>
                   <D:response><D:href>child/private.json</D:href></D:response>
                   <D:response><D:href>/elsewhere/example.json</D:href></D:response>
-                  <D:response><D:href>https://foreign.test/root/projects/snapshots/private.json</D:href></D:response>
+                  <D:response><D:href>https://foreign.test/root/\(prefix)private.json</D:href></D:response>
                 </D:multistatus>
                 """
             let response = try XCTUnwrap(HTTPURLResponse(url: url, statusCode: 207, httpVersion: nil, headerFields: nil))
             return (Data(xml.utf8), response)
         })
         let contents = try await remote.list(prefix: target.snapshotPrefix)
-        XCTAssertEqual(contents, ["projects/snapshots/first copy.json", "projects/snapshots/second.json"])
+        XCTAssertEqual(contents, ["\(prefix)first copy.json", "\(prefix)second.json"])
     }
 
     func testHTTPRequiresExplicitOptInAndLocalAddress() async throws {

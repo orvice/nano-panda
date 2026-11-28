@@ -271,9 +271,13 @@ struct CloudSyncView: View {
             }
             switch cloud.connectionFeedback {
             case let .passed(milliseconds):
-                Label("连接正常 · \(milliseconds) ms", systemImage: "checkmark.circle.fill")
-                    .font(WorkspaceStyle.small).foregroundStyle(WorkspaceStyle.greenInk)
-                    .monospacedDigit()
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("\(testedConnectionLocation)可访问 · \(milliseconds) ms", systemImage: "checkmark.circle.fill")
+                        .foregroundStyle(WorkspaceStyle.greenInk).monospacedDigit()
+                    Text("此测试仅检查上述位置的访问权限，写入权限将在实际同步时验证。")
+                        .foregroundStyle(WorkspaceStyle.secondary)
+                }
+                .font(WorkspaceStyle.small)
             case let .failed(message): CloudErrorLabel(message: message)
             case nil: if cloud.operation == .testing { CloudProgressLabel(title: "正在测试连接") }
             }
@@ -281,6 +285,13 @@ struct CloudSyncView: View {
         }
         .workspaceCard()
         .disabled(cloud.isWorking)
+    }
+
+    private var testedConnectionLocation: String {
+        switch currentDraft.target {
+        case .s3: return "S3 Bucket"
+        case .webDAV: return "WebDAV 根目录"
+        }
     }
 
     private var encryptionCard: some View {

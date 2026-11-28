@@ -254,6 +254,41 @@ final class CloudSyncEngineTests: XCTestCase {
         XCTAssertTrue(deleted.isEmpty)
     }
 
+    func testSnapshotOperationsAreIsolatedByMainObjectKeyWithinOneDirectory() async throws {
+        let fixture = try Fixture()
+        let firstEngine = fixture.engine(for: fixture.first)
+        let secondEngine = fixture.engine(for: fixture.second)
+        guard case let .webDAV(target) = fixture.configuration.target else {
+            return XCTFail("Expected WebDAV fixture")
+        }
+        var work = target
+        work.objectKey = "profiles/work.json"
+        var personal = target
+        personal.objectKey = "profiles/personal.json"
+        try await firstEngine.saveConfiguration(CloudConfiguration(
+            target: .webDAV(work), encryption: fixture.configuration.encryption
+        ))
+        try await secondEngine.saveConfiguration(CloudConfiguration(
+            target: .webDAV(personal), encryption: fixture.configuration.encryption
+        ))
+        let workSnapshot = try await firstEngine.createSnapshot(note: "Work", sourceDevice: "First device")
+        let personalSnapshot = try await secondEngine.createSnapshot(note: "Personal", sourceDevice: "Second device")
+
+        let workHistory = try await firstEngine.listSnapshots()
+        XCTAssertEqual(workHistory.map(\.id), [workSnapshot.id])
+        let personalHistory = try await secondEngine.listSnapshots()
+        XCTAssertEqual(personalHistory.map(\.id), [personalSnapshot.id])
+        do {
+            _ = try await firstEngine.previewSnapshot(personalSnapshot.id)
+            XCTFail("Expected the snapshot ID to be unavailable under a different main object key")
+        } catch PandaError.stale {}
+
+        try await firstEngine.deleteSnapshot(personalSnapshot.id)
+        try await firstEngine.deleteSnapshot(workSnapshot.id)
+        let remainingPersonalHistory = try await secondEngine.listSnapshots()
+        XCTAssertEqual(remainingPersonalHistory.map(\.id), [personalSnapshot.id])
+    }
+
     func testWholeSnapshotRestoreDeletesRemoteOnlyEntriesOnFirstBinding() async throws {
         let fixture = try Fixture()
         let recorded = server("recorded")

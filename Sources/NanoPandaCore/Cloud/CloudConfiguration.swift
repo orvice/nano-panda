@@ -1,3 +1,4 @@
+import CryptoKit
 import Darwin
 import Foundation
 
@@ -31,7 +32,10 @@ public enum CloudTarget: Codable, Equatable, Sendable {
 
     public var snapshotPrefix: String {
         let directories = objectKey.split(separator: "/", omittingEmptySubsequences: false).dropLast()
-        return (directories.map(String.init) + ["snapshots", ""]).joined(separator: "/")
+        // Keep each main object’s history in its own collection, even in a shared parent directory.
+        let digest = SHA256.hash(data: Data(objectKey.utf8))
+        let namespace = digest.prefix(16).map { String(format: "%02x", $0) }.joined()
+        return (directories.map(String.init) + ["snapshots", namespace, ""]).joined(separator: "/")
     }
 
     func validate() throws {

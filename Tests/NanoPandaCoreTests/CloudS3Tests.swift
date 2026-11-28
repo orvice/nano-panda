@@ -44,22 +44,24 @@ final class CloudS3Tests: XCTestCase {
             endpoint: "https://s3.example.test/s3", region: "us-east-1", bucket: "fixture-bucket",
             objectKey: "profiles/config.json", accessKeyID: "fixture", secretAccessKey: "fixture-secret"
         ))
+        let namespace = "6e3e8458e513cffe14d3c0ffaa76e18c"
+        let prefix = "profiles/snapshots/\(namespace)/"
         let remote = try CloudRemote(target: target, execute: { request in
             XCTAssertEqual(request.url?.path, "/s3/fixture-bucket")
             XCTAssertEqual(request.httpMethod, "GET")
             switch request.url?.query {
-            case "list-type=2&prefix=profiles%2Fsnapshots%2F":
+            case "list-type=2&prefix=profiles%2Fsnapshots%2F\(namespace)%2F":
                 return try s3Response(request, status: 200, body: """
                     <ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
                       <IsTruncated>true</IsTruncated><NextContinuationToken>token+=/&amp;</NextContinuationToken>
-                      <Contents><Key>profiles/snapshots/a.json</Key></Contents>
+                      <Contents><Key>\(prefix)a.json</Key></Contents>
                       <Contents><Key>unrelated.json</Key></Contents>
                     </ListBucketResult>
                     """)
-            case "continuation-token=token%2B%3D%2F%26&list-type=2&prefix=profiles%2Fsnapshots%2F":
+            case "continuation-token=token%2B%3D%2F%26&list-type=2&prefix=profiles%2Fsnapshots%2F\(namespace)%2F":
                 return try s3Response(request, status: 200, body: """
                     <ListBucketResult><IsTruncated>false</IsTruncated>
-                      <Contents><Key>profiles/snapshots/b.json</Key></Contents>
+                      <Contents><Key>\(prefix)b.json</Key></Contents>
                     </ListBucketResult>
                     """)
             default:
@@ -68,7 +70,7 @@ final class CloudS3Tests: XCTestCase {
             }
         })
         let keys = try await remote.list(prefix: target.snapshotPrefix)
-        XCTAssertEqual(keys, ["profiles/snapshots/a.json", "profiles/snapshots/b.json"])
+        XCTAssertEqual(keys, ["\(prefix)a.json", "\(prefix)b.json"])
     }
 
     func testConditionRejectionAndBucketConnectionAreObservable() async throws {
