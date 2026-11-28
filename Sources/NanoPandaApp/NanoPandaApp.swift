@@ -23,6 +23,11 @@ struct NanoPandaApp: App {
             CommandMenu("MCP") {
                 Button("搜索 MCP", action: state.focusSearch).keyboardShortcut("k")
                 Button("从 JSON 粘贴", action: state.paste)
+                Button("导入配置文件…", action: state.showArchiveImport)
+                    .disabled(!state.canEdit)
+                Button("导出 MCP 配置…", action: state.showArchiveExport)
+                    .disabled(!state.canEdit || state.servers.isEmpty)
+                Divider()
                 Button("扫描本机导入", action: state.scan)
                     .keyboardShortcut("i", modifiers: [.command, .shift])
                 Button("同步预览", action: state.preview)

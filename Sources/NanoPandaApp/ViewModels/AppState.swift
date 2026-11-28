@@ -7,7 +7,7 @@ enum Destination: Hashable {
 }
 
 enum ActiveSheet: String, Identifiable {
-    case new, paste, scan, sync, path, restore, inspect
+    case new, paste, scan, sync, path, restore, inspect, importArchive, exportArchive
     var id: Self { self }
 }
 
@@ -57,6 +57,29 @@ final class AppState {
 
     func newServer() { if canEdit { sheet = .new } }
     func paste() { if canEdit { sheet = .paste } }
+    func showArchiveImport() { if canEdit { sheet = .importArchive } }
+    func showArchiveExport() { if canEdit && !servers.isEmpty { sheet = .exportArchive } }
+
+    func importArchive(_ entries: [MCPServer], conflicts: MCPArchive.ConflictPolicy) throws {
+        let existing = Set(registry.servers.map(\.id))
+        let updated = try MCPArchive.merging(entries, into: registry, conflicts: conflicts)
+        if updated != registry { try save(updated) }
+        if let first = entries.first(where: { !existing.contains($0.id) || conflicts == .replace }) {
+            destination = .server(first.id)
+        }
+        sheet = nil
+    }
+
+    func validateArchiveDestination(_ url: URL) throws {
+        let path = url.standardizedFileURL.resolvingSymlinksInPath().path.lowercased()
+        let registryPath = engine.store.directory.path.lowercased()
+        let toolPaths = ToolID.allCases.map {
+            engine.path(for: $0, in: registry).standardizedFileURL.resolvingSymlinksInPath().path.lowercased()
+        }
+        guard path != registryPath, !path.hasPrefix(registryPath + "/"), !toolPaths.contains(path) else {
+            throw PandaError.invalid("请选择 Nano Panda 配置目录和 Agent 配置文件之外的导出位置。")
+        }
+    }
 
     func scan() {
         guard canEdit else { return }

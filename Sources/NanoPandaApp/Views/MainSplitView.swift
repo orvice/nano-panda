@@ -49,6 +49,8 @@ struct MainSplitView: View {
             case .restore:
                 if let preview = state.restorePlan { RestoreSheet(state: state, preview: preview) }
             case .inspect: ToolInspectSheet(state: state, tool: state.editingTool)
+            case .importArchive: ArchiveImportSheet(state: state)
+            case .exportArchive: ArchiveExportSheet(state: state)
             }
         }
         .alert("操作未完成", isPresented: Binding(
@@ -105,6 +107,20 @@ struct MainSplitView: View {
                 .buttonStyle(WorkspaceButton())
             Button("新建 MCP", systemImage: "plus", action: state.newServer)
                 .buttonStyle(WorkspaceButton())
+            Menu {
+                Button("导入配置文件…", action: state.showArchiveImport)
+                Button("导出 MCP 配置…", action: state.showArchiveExport)
+                    .disabled(state.servers.isEmpty)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 16))
+                    .frame(width: 28, height: 32)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .help("导入或导出 MCP 配置")
+            .accessibilityLabel("导入和导出")
+            .disabled(!state.canEdit)
             Button(action: state.preview) {
                 HStack(spacing: 7) {
                     Label("同步变更", systemImage: "arrow.triangle.2.circlepath")

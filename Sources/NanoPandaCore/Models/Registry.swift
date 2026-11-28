@@ -1,6 +1,6 @@
 import Foundation
 
-public enum ToolID: String, Codable, CaseIterable, Identifiable, Hashable {
+public enum ToolID: String, Codable, CaseIterable, Identifiable, Hashable, Sendable {
     case claudeCode, codex, antigravity, claudeDesktop, cursor, windsurf, geminiCLI, openCode
 
     public var id: String { rawValue }
@@ -42,7 +42,7 @@ public struct ToolAssignment: Hashable {
     }
 }
 
-public enum Transport: Codable, Equatable {
+public enum Transport: Codable, Equatable, Sendable {
     case stdio(command: String, args: [String], env: [String: String])
     case http(url: String, headers: [String: String], bearerTokenEnvVar: String?)
     case sse(url: String, headers: [String: String])
@@ -68,7 +68,7 @@ public enum Transport: Codable, Equatable {
     }
 }
 
-public enum ConfigValue: Codable, Equatable {
+public enum ConfigValue: Codable, Equatable, Sendable {
     case string(String), integer(Int64), number(Double), bool(Bool)
     case array([ConfigValue]), object([String: ConfigValue]), null
 
@@ -119,13 +119,13 @@ public enum ConfigValue: Codable, Equatable {
     }
 }
 
-public struct ServerOverride: Codable, Equatable {
+public struct ServerOverride: Codable, Equatable, Sendable {
     public var fields: [String: ConfigValue]
 
     public init(fields: [String: ConfigValue] = [:]) { self.fields = fields }
 }
 
-public struct MCPServer: Codable, Equatable, Identifiable {
+public struct MCPServer: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var transport: Transport
     public var enabledTools: Set<ToolID>
