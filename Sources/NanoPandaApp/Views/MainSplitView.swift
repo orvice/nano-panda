@@ -20,6 +20,7 @@ struct MainSplitView: View {
                 switch state.destination {
                 case .matrix: ToolMatrixView(state: state)
                 case .tools: ToolSettingsView(state: state)
+                case .cli: CLIToolsView(home: state.engine.home, query: state.cliSearch)
                 default: serverWorkspace
                 }
             }
@@ -86,16 +87,16 @@ struct MainSplitView: View {
 
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass").foregroundStyle(WorkspaceStyle.muted)
-                TextField("搜索 MCP 或标签", text: $state.search)
+                TextField(state.destination == .cli ? "搜索 CLI 工具" : "搜索 MCP 或标签", text: workspaceSearch)
                     .textFieldStyle(.plain).focused($searching)
                     .onChange(of: state.search) { _, search in
                         guard !search.isEmpty else { return }
                         if state.destination == .matrix || state.destination == .tools { state.destination = .overview }
                     }
-                if state.search.isEmpty {
+                if workspaceSearch.wrappedValue.isEmpty {
                     FormatBadge(label: "⌘K").accessibilityHidden(true)
                 } else {
-                    Button("清除搜索", systemImage: "xmark.circle.fill") { state.search = "" }
+                    Button("清除搜索", systemImage: "xmark.circle.fill") { workspaceSearch.wrappedValue = "" }
                         .labelStyle(.iconOnly).buttonStyle(.plain).foregroundStyle(WorkspaceStyle.muted)
                 }
             }
@@ -160,13 +161,16 @@ struct MainSplitView: View {
             .frame(height: 36)
             VStack(alignment: .leading, spacing: 4) {
                 if sidebarExpanded { sidebarHeading("工作区").transition(.opacity) }
-                navigation("MCP 服务", icon: "server.rack", active: state.destination != .matrix && state.destination != .tools,
+                navigation("MCP 服务", icon: "server.rack", active: state.destination?.isServerWorkspace != false,
                            count: state.servers.count, action: showServerWorkspace)
                 navigation("工具矩阵", icon: "square.grid.2x2", active: state.destination == .matrix) {
                     state.destination = .matrix
                 }
                 navigation("Agent 工具", icon: "cable.connector", active: state.destination == .tools,
                            count: ToolID.allCases.count) { state.destination = .tools }
+                navigation("CLI 工具", icon: "terminal", active: state.destination == .cli) {
+                    state.destination = .cli
+                }
             }
             if sidebarExpanded {
                 sidebarStatus.transition(.opacity)
@@ -215,8 +219,12 @@ struct MainSplitView: View {
         }
     }
 
+    private var workspaceSearch: Binding<String> {
+        state.destination == .cli ? $state.cliSearch : $state.search
+    }
+
     private func showServerWorkspace() {
-        guard state.destination == .matrix || state.destination == .tools else { return }
+        guard state.destination?.isServerWorkspace == false else { return }
         if case let .server(id) = lastServerWorkspace, state.servers.contains(where: { $0.id == id }) {
             state.destination = lastServerWorkspace
         } else {

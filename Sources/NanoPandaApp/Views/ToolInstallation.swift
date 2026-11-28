@@ -24,10 +24,6 @@ enum ToolInstallation {
             }
         }
         guard let command else { return false }
-        let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
-        let locations = path.split(separator: ":").map(String.init)
-            + ["/opt/homebrew/bin", "/usr/local/bin"]
-            + [".local/bin", ".opencode/bin", ".bun/bin"].map { home.appendingPathComponent($0).path }
-        return locations.contains { files.isExecutableFile(atPath: URL(fileURLWithPath: $0).appendingPathComponent(command).path) }
+        return CLIExecutableLookup(home: home).find(command) != nil
     }
 }

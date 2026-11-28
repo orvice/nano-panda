@@ -21,7 +21,7 @@ struct NanoPandaApp: App {
                     .keyboardShortcut("n")
             }
             CommandMenu("MCP") {
-                Button("搜索 MCP", action: state.focusSearch).keyboardShortcut("k")
+                Button("搜索工作区", action: state.focusSearch).keyboardShortcut("k")
                 Button("从 JSON 粘贴", action: state.paste)
                 Button("导入配置文件…", action: state.showArchiveImport)
                     .disabled(!state.canEdit)
