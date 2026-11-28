@@ -37,6 +37,12 @@ cat > "$bundle/Contents/Info.plist" <<'PLIST'
     <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key><true/>
+    </dict>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Nano Panda 使用局域网连接你配置的 S3 兼容服务或 WebDAV 服务器，以同步加密的 MCP 配置。</string>
 </dict>
 </plist>
 PLIST
