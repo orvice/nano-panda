@@ -76,6 +76,8 @@ public struct CloudSnapshotChange: Identifiable, Sendable {
 public struct CloudSnapshotPreview: Sendable {
     public let snapshot: CloudSnapshotSummary
     public let changes: [CloudSnapshotChange]
+    public let remoteChanges: [CloudSnapshotChange]
+    let reviewedMainDigest: Data?
     let configurationID: UUID
     let localServers: [MCPServer]
     let remoteDigest: Data

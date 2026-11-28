@@ -145,7 +145,9 @@ struct CloudSnapshotRestoreSheet: View {
     private var selectable: Set<String> {
         Set(preview.changes.filter { $0.target != nil && $0.kind != .unchanged }.map(\.id))
     }
-    private var changeCount: Int { preview.changes.filter { $0.kind != .unchanged }.count }
+    private var hasFullRestoreChanges: Bool {
+        preview.changes.contains { $0.kind != .unchanged } || !preview.remoteChanges.isEmpty
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -153,9 +155,19 @@ struct CloudSnapshotRestoreSheet: View {
             Divider().overlay(WorkspaceStyle.border)
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    if mode == .full && !preview.remoteChanges.isEmpty {
+                        restoreSectionTitle("本机中央配置库")
+                    }
                     ForEach(preview.changes, id: \.id) { change in
                         changeRow(change)
                         Divider().overlay(WorkspaceStyle.border)
+                    }
+                    if mode == .full && !preview.remoteChanges.isEmpty {
+                        restoreSectionTitle("远端中央配置库")
+                        ForEach(preview.remoteChanges, id: \.id) { change in
+                            changeRow(change, remote: true)
+                            Divider().overlay(WorkspaceStyle.border)
+                        }
                     }
                 }
                 .padding(.horizontal, 24)
@@ -202,7 +214,12 @@ struct CloudSnapshotRestoreSheet: View {
         .padding(.horizontal, 24).padding(.vertical, 16)
     }
 
-    private func changeRow(_ change: CloudSnapshotChange) -> some View {
+    private func restoreSectionTitle(_ title: String) -> some View {
+        Text(title).font(WorkspaceStyle.title).accessibilityAddTraits(.isHeader)
+            .padding(.top, 12).padding(.bottom, 4)
+    }
+
+    private func changeRow(_ change: CloudSnapshotChange, remote: Bool = false) -> some View {
         HStack(alignment: .top, spacing: 8) {
             if mode == .selected {
                 Toggle(isOn: Binding(
@@ -218,7 +235,7 @@ struct CloudSnapshotRestoreSheet: View {
             DisclosureGroup {
                 CloudEntryComparison(
                     left: change.current, right: change.target,
-                    leftTitle: "当前中央配置库", rightTitle: "快照版本"
+                    leftTitle: remote ? "当前远端中央配置库" : "当前本机中央配置库", rightTitle: "快照版本"
                 )
                 .padding(.top, 8)
             } label: {
@@ -256,7 +273,7 @@ struct CloudSnapshotRestoreSheet: View {
                     .buttonStyle(WorkspaceButton()).keyboardShortcut(.cancelAction)
                 Button(mode == .full ? "恢复整份快照" : "恢复所选 \(selected.count) 项", action: submit)
                     .buttonStyle(WorkspaceButton(kind: .primary)).keyboardShortcut(.defaultAction)
-                    .disabled(mode == .full ? changeCount == 0 : selected.isEmpty)
+                    .disabled(mode == .full ? !hasFullRestoreChanges : selected.isEmpty)
             }
         }
         .padding(.horizontal, 24).padding(.vertical, 16)

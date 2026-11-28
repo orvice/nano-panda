@@ -21,6 +21,8 @@ public actor CloudSyncEngine {
             return nil
         }
 
+        var digest: Data? { object.map { Data(SHA256.hash(data: $0.data)) } }
+
         var etag: String? {
             switch self {
             case .missing: return nil
@@ -52,7 +54,8 @@ public actor CloudSyncEngine {
     public func hasUnsyncedRegistryChanges() throws -> Bool {
         guard let config = try store.loadCloudConfiguration() else { return false }
         let state = try store.cloudState(configurationID: config.id)
-        if state.pending != nil || state.restoration != nil { return true }
+        if state.pending != nil || state.restoration != nil || state.snapshotRestoration != nil
+            || state.stagedRestoration != nil { return true }
         return try !store.load().servers.hasSameCloudConfigurations(as: state.baseline?.servers ?? [])
     }
 
@@ -77,14 +80,8 @@ public actor CloudSyncEngine {
     ) async throws -> CloudSyncResult {
         let key = session.target.objectKey
         var state = try store.cloudState(configurationID: session.configuration.id)
+        try reconcileStagedRestoration(in: &state)
         var conditionalWriteSupported = true
-        let mergeMode: CloudSyncMode = mode == .merge && state.restoration == .all ? .forceLocal : mode
-        let restoredIDs: Set<String>
-        if mode == .merge, case let .selected(ids) = state.restoration {
-            restoredIDs = ids
-        } else {
-            restoredIDs = []
-        }
 
         for _ in 0..<4 {
             try Task.checkCancellation()
@@ -95,18 +92,30 @@ public actor CloudSyncEngine {
                 throw PandaError.invalid("远端尚无可用于覆盖本机的中央配置库。")
             }
 
-            var baseline = state.baseline
-            var localServers = registry.servers
-            if let pending = state.pending,
-               pending.payload == remotePayload || pending.confirmed {
-                baseline = pending.payload
-                if mergeMode == .merge { localServers = pending.replayLocalChanges(from: registry.servers) }
+            let restoration = state.snapshotRestoration
+            let scope = restoration?.scope ?? state.restoration
+            let fullRestore = mode == .merge && scope == .all
+            let pending = state.pending.flatMap { candidate in
+                (!fullRestore || candidate.restorationID == restoration?.id)
+                    && (candidate.payload == remotePayload || candidate.confirmed) ? candidate : nil
             }
+            let remoteDigest = observed.digest
+            let mergeMode: CloudSyncMode = fullRestore && pending == nil ? .forceLocal : mode
+            let restoredIDs: Set<String>
+            if mode == .merge, restoration == nil || pending?.restorationID != restoration?.id,
+               case let .selected(ids) = scope {
+                restoredIDs = ids
+            } else {
+                restoredIDs = []
+            }
+            let baseline = pending?.payload ?? state.baseline
+            let localServers = mergeMode == .merge
+                ? pending?.replayLocalChanges(from: registry.servers) ?? registry.servers
+                : registry.servers
             let merge = CloudSyncMerge(
                 base: baseline, local: localServers, remote: remotePayload, explicitlyRestored: restoredIDs
             )
             let conflicts = mergeMode == .merge ? merge.conflicts : []
-            let remoteDigest = observed.object.map { Data(SHA256.hash(data: $0.data)) }
             let preview = CloudConflictPreview(
                 conflicts: conflicts, configurationID: session.configuration.id,
                 localServers: registry.servers, remoteRevision: remotePayload?.revision,
@@ -132,6 +141,12 @@ public actor CloudSyncEngine {
                 )
             }
 
+            if fullRestore && pending == nil {
+                guard let restoration, restoration.reviewedMainDigest == remoteDigest else {
+                    throw PandaError.stale("远端中央配置库在预览后已变化，请重新打开快照预览并确认远端变更。")
+                }
+            }
+
             let data = try CloudEnvelope.encode(merged, kind: .sync, encryption: session.encryption)
             // A second read narrows the race for providers that lack or ignore conditional writes.
             let beforeWrite: MainObject
@@ -143,17 +158,23 @@ public actor CloudSyncEngine {
             guard observed == beforeWrite else { continue }
             let condition = try writeCondition(for: beforeWrite, supported: conditionalWriteSupported)
 
-            if let pending = state.pending, pending.payload == remotePayload || pending.confirmed {
+            if let pending {
                 // Commit the recovered revision before recording another candidate.
                 try store.replaceCloudServers(localServers.ordered(like: registry.servers), replacing: registry)
                 state.baseline = pending.payload
                 state.etag = observed.etag
                 state.pending = nil
+                if pending.restorationID == restoration?.id {
+                    state.snapshotRestoration = nil
+                    state.restoration = nil
+                }
                 try store.saveCloudState(state)
                 continue
             }
 
-            state.pending = CloudPendingWrite(payload: merged, localServers: registry.servers)
+            state.pending = CloudPendingWrite(
+                payload: merged, localServers: registry.servers, restorationID: restoration?.id
+            )
             try store.saveCloudState(state)
             do {
                 _ = try await session.remote.write(data, to: key, condition: condition)
@@ -227,9 +248,14 @@ public actor CloudSyncEngine {
             throw PandaError.stale("此远端版本快照已不存在。")
         }
         let snapshot = try decodeSnapshot(object, id: id, in: active)
+        let main = try await readMain(in: active, replacingDamagedData: false)
+        let mainPayload = try decodeSync(main.object, in: active, replacingDamagedData: false)
         let current = try store.load().servers
         return CloudSnapshotPreview(
             snapshot: snapshot.summary, changes: cloudSnapshotChanges(from: current, to: snapshot.servers),
+            remoteChanges: cloudSnapshotChanges(from: mainPayload?.servers ?? [], to: snapshot.servers)
+                .filter { $0.kind != .unchanged },
+            reviewedMainDigest: main.digest,
             configurationID: active.configuration.id, localServers: current,
             remoteDigest: Data(SHA256.hash(data: object.data)), remoteETag: object.etag
         )
@@ -248,6 +274,11 @@ public actor CloudSyncEngine {
             throw PandaError.stale("远端版本快照在预览后已变化，请重新打开预览。")
         }
         let snapshot = try decodeSnapshot(object, id: preview.snapshot.id, in: active)
+        let main = try await readMain(in: active, replacingDamagedData: false)
+        _ = try decodeSync(main.object, in: active, replacingDamagedData: false)
+        if selectedIDs == nil, preview.reviewedMainDigest != main.digest {
+            throw PandaError.stale("远端中央配置库在预览后已变化，请重新打开快照预览并确认远端变更。")
+        }
         let registry = try store.load()
         guard registry.servers == preview.localServers else {
             throw PandaError.stale("中央配置库在预览后已变化，请重新打开预览。")
@@ -262,11 +293,28 @@ public actor CloudSyncEngine {
         } else {
             entries = snapshot.servers
         }
-        try store.replaceCloudServers(entries.ordered(like: registry.servers), replacing: registry)
         var state = try store.cloudState(configurationID: active.configuration.id)
-        state.restoration = selectedIDs.map(CloudRestoreScope.selected) ?? .all
+        try reconcileStagedRestoration(in: &state)
+        let restoration = CloudSnapshotRestoration(
+            id: UUID(), scope: selectedIDs.map(CloudRestoreScope.selected) ?? .all,
+            reviewedMainDigest: preview.reviewedMainDigest
+        )
+        state.stagedRestoration = restoration
         try store.saveCloudState(state)
+        try store.replaceCloudServers(
+            entries.ordered(like: registry.servers), replacing: registry, restorationID: restoration.id
+        )
         return try await synchronize(in: active)
+    }
+
+    private func reconcileStagedRestoration(in state: inout CloudLocalState) throws {
+        guard let staged = state.stagedRestoration else { return }
+        // The Registry records the ID in the same atomic replacement as the restored entries.
+        if try store.load().cloudRestorationID == staged.id {
+            state.snapshotRestoration = staged
+            state.restoration = nil
+        }
+        state.stagedRestoration = nil
     }
 
     private func session() throws -> Session {

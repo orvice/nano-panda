@@ -10,6 +10,7 @@ struct CloudPendingWrite: Codable {
     let payload: CloudSyncPayload
     let localServers: [MCPServer]
     var confirmed = false
+    var restorationID: UUID?
 
     func replayLocalChanges(from current: [MCPServer]) -> [MCPServer] {
         let observed = Dictionary(uniqueKeysWithValues: localServers.map { ($0.id, $0) })
@@ -27,6 +28,12 @@ enum CloudRestoreScope: Codable, Equatable {
     case selected(Set<String>)
 }
 
+struct CloudSnapshotRestoration: Codable {
+    let id: UUID
+    let scope: CloudRestoreScope
+    let reviewedMainDigest: Data?
+}
+
 struct CloudLocalState: Codable {
     let configurationID: UUID
     var baseline: CloudSyncPayload?
@@ -34,6 +41,8 @@ struct CloudLocalState: Codable {
     var summary: CloudSyncSummary?
     var pending: CloudPendingWrite?
     var restoration: CloudRestoreScope?
+    var snapshotRestoration: CloudSnapshotRestoration?
+    var stagedRestoration: CloudSnapshotRestoration?
 }
 
 extension RegistryStore {
@@ -78,18 +87,21 @@ extension RegistryStore {
         try LocalFile.write(try JSONEncoder().encode(state), to: cloudStateURL, permissions: 0o600)
     }
 
-    func replaceCloudServers(_ entries: [MCPServer], replacing expected: Registry) throws {
+    func replaceCloudServers(
+        _ entries: [MCPServer], replacing expected: Registry, restorationID: UUID? = nil
+    ) throws {
         try locked {
             guard try load() == expected else {
                 throw PandaError.stale("中央配置库在云端操作期间已变化，请重试。")
             }
-            guard expected.servers != entries else { return }
+            guard expected.servers != entries || restorationID != nil else { return }
             let backupDirectory = directory.appendingPathComponent("cloud-registry-backups", isDirectory: true)
             let backupURL = backupDirectory.appendingPathComponent(UUID().uuidString + ".json")
             let backup = try LocalFile.read(registryURL) ?? JSONEncoder().encode(expected)
             try LocalFile.write(backup, to: backupURL, permissions: 0o600)
             var updated = expected
             updated.servers = entries
+            if let restorationID { updated.cloudRestorationID = restorationID }
             try write(updated)
         }
     }

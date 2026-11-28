@@ -266,18 +266,127 @@ final class CloudSyncEngineTests: XCTestCase {
         _ = try await firstEngine.synchronize()
 
         let preview = try await secondEngine.previewSnapshot(snapshot.id)
-        await fixture.service.failNextMainRead()
+        XCTAssertEqual(preview.remoteChanges.map(\.id), ["remote-only"])
+        XCTAssertEqual(preview.remoteChanges.map(\.kind), [.deleted])
+        await fixture.service.failMainRead(after: 1)
         do {
             _ = try await secondEngine.restoreSnapshot(preview)
             XCTFail("Expected the forward sync to be interrupted")
         } catch CloudRemoteError.http(503) {
             XCTAssertEqual(try fixture.second.load().servers, [recorded])
         }
+        let localEdit = server("added-after-restore")
+        let current = try fixture.second.load()
+        try fixture.second.save(registry([recorded, localEdit]), replacing: current)
         _ = try await fixture.engine(for: fixture.second).synchronize()
         _ = try await firstEngine.synchronize()
 
+        XCTAssertEqual(Set(try fixture.first.load().servers.map(\.id)), [recorded.id, localEdit.id])
+        XCTAssertEqual(Set(try fixture.second.load().servers.map(\.id)), [recorded.id, localEdit.id])
+    }
+
+    func testWholeSnapshotRestoreLeavesNewRemoteChangesForAnotherPreview() async throws {
+        let fixture = try Fixture()
+        let recorded = server("recorded")
+        let remoteOnly = server("remote-only")
+        let concurrent = server("concurrent")
+        try fixture.first.save(registry([recorded]), replacing: Registry())
+        let (firstEngine, secondEngine) = try await fixture.connect()
+        _ = try await firstEngine.synchronize()
+        let snapshot = try await firstEngine.createSnapshot(note: nil, sourceDevice: "First device")
+        let beforeRemoteEdit = try await secondEngine.previewSnapshot(snapshot.id)
+        try fixture.first.save(registry([recorded, remoteOnly]), replacing: try fixture.first.load())
+        _ = try await firstEngine.synchronize()
+
+        do {
+            _ = try await secondEngine.restoreSnapshot(beforeRemoteEdit)
+            XCTFail("Expected the reviewed remote revision to be stale")
+        } catch PandaError.stale {
+            XCTAssertTrue(try fixture.second.load().servers.isEmpty)
+        }
+
+        let preview = try await secondEngine.previewSnapshot(snapshot.id)
+        await fixture.service.interceptNextMainWrite {
+            let current = try fixture.first.load()
+            var edited = current
+            edited.servers.append(concurrent)
+            try fixture.first.save(edited, replacing: current)
+            _ = try await firstEngine.synchronize()
+        }
+        do {
+            _ = try await secondEngine.restoreSnapshot(preview)
+            XCTFail("Expected conditional write retry to stop on the unreviewed remote revision")
+        } catch PandaError.stale {
+            XCTAssertEqual(try fixture.second.load().servers, [recorded])
+        }
+
+        let retriedEngine = fixture.engine(for: fixture.second)
+        let updated = try await retriedEngine.previewSnapshot(snapshot.id)
+        XCTAssertEqual(Set(updated.remoteChanges.map(\.id)), [remoteOnly.id, concurrent.id])
+        XCTAssertTrue(updated.remoteChanges.allSatisfy { $0.kind == .deleted })
+        _ = try await retriedEngine.restoreSnapshot(updated)
+        _ = try await firstEngine.synchronize()
         XCTAssertEqual(try fixture.first.load().servers, [recorded])
-        XCTAssertEqual(try fixture.second.load().servers, [recorded])
+    }
+
+    func testSnapshotRestoreAuthenticatesCurrentRemoteBeforeMutatingLocalRegistry() async throws {
+        let fixture = try Fixture()
+        let recorded = server("recorded")
+        try fixture.first.save(registry([recorded]), replacing: Registry())
+        let (firstEngine, secondEngine) = try await fixture.connect()
+        let snapshot = try await firstEngine.createSnapshot(note: nil, sourceDevice: "First device")
+        let preview = try await secondEngine.previewSnapshot(snapshot.id)
+        await fixture.service.damageMain()
+
+        do {
+            _ = try await secondEngine.restoreSnapshot(preview)
+            XCTFail("Expected restore to reject corrupted remote data")
+        } catch PandaError.invalid {
+            XCTAssertEqual(try fixture.second.load(), Registry())
+        }
+    }
+
+    func testSnapshotRestoreRequiresDurableStateBeforeReplacingRegistry() async throws {
+        let fixture = try Fixture()
+        let recorded = server("recorded")
+        try fixture.first.save(registry([recorded]), replacing: Registry())
+        let (firstEngine, secondEngine) = try await fixture.connect()
+        let snapshot = try await firstEngine.createSnapshot(note: nil, sourceDevice: "First device")
+        let preview = try await secondEngine.previewSnapshot(snapshot.id)
+        let stateFile = fixture.second.directory.appendingPathComponent("cloud-baseline.json")
+        try FileManager.default.createDirectory(at: stateFile, withIntermediateDirectories: false)
+
+        do {
+            _ = try await secondEngine.restoreSnapshot(preview)
+            XCTFail("Expected restore to fail with unavailable cloud state")
+        } catch PandaError.invalid {
+            XCTAssertEqual(try fixture.second.load(), Registry())
+        }
+    }
+
+    func testUncommittedSnapshotRestoreDoesNotDeleteRemoteEntries() async throws {
+        let fixture = try Fixture()
+        let recorded = server("recorded")
+        let remoteOnly = server("remote-only")
+        try fixture.first.save(registry([recorded, remoteOnly]), replacing: Registry())
+        let (firstEngine, secondEngine) = try await fixture.connect()
+        _ = try await firstEngine.synchronize()
+        try fixture.first.save(registry([recorded]), replacing: try fixture.first.load())
+        let snapshot = try await firstEngine.createSnapshot(note: nil, sourceDevice: "First device")
+        let preview = try await secondEngine.previewSnapshot(snapshot.id)
+        let backup = fixture.second.directory.appendingPathComponent("cloud-registry-backups")
+        try Data().write(to: backup)
+
+        do {
+            _ = try await secondEngine.restoreSnapshot(preview)
+            XCTFail("Expected restore to fail while creating its backup")
+        } catch {
+            XCTAssertEqual(try fixture.second.load().servers, [])
+        }
+        try FileManager.default.removeItem(at: backup)
+        let reopened = fixture.engine(for: fixture.second)
+        _ = try await reopened.synchronize()
+        XCTAssertEqual(Set(try fixture.second.load().servers.map(\.id)), [recorded.id, remoteOnly.id])
     }
 
     func testForceLocalCanReplaceOversizedRemoteObjectUsingItsETag() async throws {
@@ -412,7 +521,7 @@ private actor CloudEngineTestService {
     private var version = 0
     private var writeHook: (@Sendable () async throws -> Void)?
     private var unsupportedHook: (@Sendable () async throws -> Void)?
-    private var mainReadFailure = false
+    private var mainReadsBeforeFailure: Int?
     private var ignoresWriteConditions = false
     private var readHook: (@Sendable () async throws -> Void)?
 
@@ -420,7 +529,7 @@ private actor CloudEngineTestService {
 
     func rejectNextConditionalWrite(_ hook: @escaping @Sendable () async throws -> Void) { unsupportedHook = hook }
 
-    func failNextMainRead() { mainReadFailure = true }
+    func failMainRead(after count: Int) { mainReadsBeforeFailure = count }
 
     func ignoreWriteConditionsAndInterceptRead(_ hook: @escaping @Sendable () async throws -> Void) {
         ignoresWriteConditions = true
@@ -445,9 +554,12 @@ private actor CloudEngineTestService {
         }
         switch request.httpMethod {
         case "GET":
-            if path.hasSuffix("/registry.json"), mainReadFailure {
-                mainReadFailure = false
-                return try response(503)
+            if path.hasSuffix("/registry.json"), let count = mainReadsBeforeFailure {
+                if count == 0 {
+                    mainReadsBeforeFailure = nil
+                    return try response(503)
+                }
+                mainReadsBeforeFailure = count - 1
             }
             guard let object = objects[path] else { return try response(404) }
             if path.hasSuffix("/registry.json"), let hook = readHook {
